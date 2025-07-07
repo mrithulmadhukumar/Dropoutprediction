@@ -201,7 +201,7 @@ def run_batch_predictions(df):
 
             # ✅ INSERT student_data entry exactly once per student
             upsert_student_data(row)
-
+#removed itrow
             input_row = pd.DataFrame([row[features].values], columns=features)
 
             prediction = int(model.predict(input_row)[0])
