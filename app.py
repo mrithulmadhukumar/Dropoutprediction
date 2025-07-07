@@ -239,7 +239,7 @@ def run_batch_predictions(df):
     except Exception as e:
         st.error(f"Batch prediction failed: {e}")
         return None
-
+#
 
 
 st.markdown("---")
