@@ -4,9 +4,10 @@ import numpy as np
 import matplotlib.pyplot as plt
 import shap
 import mysql.connector
+import plotly.graph_objects as go
+
 from joblib import load
 from datetime import datetime
-
 from joblib import load
 
 # Define custom wrapper class before loading
@@ -47,7 +48,7 @@ DB_CONFIG = {
 #     "host": "localhost",  # or 127.0.0.1
 #     "port": 3306,
 #     "user": "root",
-#     "password": "Password@2000",
+#     "password": "Sajin@77",
 #     "database": "dropoutpreddb"
 # }
 
@@ -269,8 +270,74 @@ if uploaded_file is not None:
         if st.button(" Predict All"):
             with st.spinner("Running batch predictions..."):
                 prediction_df = run_batch_predictions(uploaded_df)
-            if prediction_df is not None:
-                st.success(" Predictions completed and stored")
+            if prediction_df is not None:  # For prediction probabilities from batch prediction
+                st.success("Predictions completed and stored in database.")
+
+                # Show the results in the UI
+                st.subheader("Prediction Results")
+                st.dataframe(prediction_df[["Student_ID", "Prediction_Result", "Dropout_Probability"]].sort_values(
+                    by="Dropout_Probability", ascending=False))
+
+                # visualising shap values (Top Features Contributing to Dropouts):
+                # Only keep SHAP columns
+                shap_cols = [col for col in prediction_df.columns if
+                             col not in ["Student_ID", "Prediction_Result", "Dropout_Probability"]]
+                shap_df = prediction_df[shap_cols].dropna()
+
+                # Mean absolute SHAP values
+                mean_shap = shap_df.abs().mean().sort_values(ascending=False).head(10)
+
+                # Prepare data for Plotly
+                features = mean_shap.index.tolist()
+                shap_values = mean_shap.values.tolist()
+                colors = ['#AEC6CF'] * len(features)  # soft green for all bars
+
+                # Create Plotly bar chart
+                fig = go.Figure(go.Bar(
+                    x=shap_values,
+                    y=features,
+                    orientation='h',
+                    marker_color=colors
+                ))
+
+                fig.update_layout(
+                    title="Top 10 Predictive Features (Mean Absolute SHAP Values)",
+                    xaxis_title="Mean SHAP Value",
+                    yaxis_title="Feature",
+                    width=500,
+                    height=600
+                )
+
+                fig.update_yaxes(autorange="reversed")  # Highest at top
+                st.plotly_chart(fig)
+
+                # # dropout vs non-dropout
+                # st.subheader("Dropout vs Not Dropout Count")
+                # Count values
+                count_data = prediction_df["Prediction_Result"].value_counts()
+                labels = count_data.index.tolist()
+                values = count_data.values.tolist()
+
+                # Define custom colors
+                colors = ['#A8D5BA' if label.lower() == 'not dropout' else '#F4A6A6' for label in labels]
+
+                # Create the bar chart
+                fig = go.Figure(data=[
+                    go.Bar(
+                        x=labels,
+                        y=values,
+                        marker_color=colors
+                    )
+                ])
+
+                fig.update_layout(
+                    title="Dropout vs Not Dropout Count",
+                    xaxis_title="Prediction Result",
+                    yaxis_title="Number of Students",
+                    width=400,
+                    height=600
+                )
+                st.plotly_chart(fig)
 
     except Exception as e:
         st.error(f"Error processing file: {e}")
