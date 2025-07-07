@@ -6,3 +6,4 @@ scikit-learn
 joblib
 mysql-connector-python
 matplotlib
+plotly
