@@ -199,43 +199,29 @@ def run_batch_predictions(df):
             name = row.get("Name", None)
             email = row.get("Email", None)
 
+            # ✅ INSERT student_data entry exactly once per student
+            upsert_student_data(row)
+
             input_row = pd.DataFrame([row[features].values], columns=features)
 
             prediction = int(model.predict(input_row)[0])
             probability = round(float(model.predict_proba(input_row)[0][1]) * 100, 2)
-
-            for i, row in df.iterrows():
-                student_id = row["Student_ID"]
-                name = row.get("Name", None)
-                email = row.get("Email", None)
-
-                # ✅ Add this to update/insert into student_data table
-                upsert_student_data(row)
-
-
 
             # SHAP values only for predicted dropouts
             if prediction == 1:
                 explainer = shap.TreeExplainer(model.model)
                 shap_values = explainer.shap_values(input_row[features])
 
-
-
-                # Handle various SHAP formats
                 if isinstance(shap_values, list) and len(shap_values) == 2:
-                    shap_row = shap_values[1][0]  # Class 1, first row
+                    shap_row = shap_values[1][0]  # Class 1
                 elif isinstance(shap_values, np.ndarray) and shap_values.ndim == 3:
-                    shap_row = shap_values[0, :, 1]  # Class 1, first row
+                    shap_row = shap_values[0, :, 1]
                 elif isinstance(shap_values, np.ndarray) and shap_values.ndim == 2:
-                    shap_row = shap_values[0]  # First row
+                    shap_row = shap_values[0]
                 else:
-                    raise ValueError(
-                        f"❌ Unexpected SHAP format: type={type(shap_values)}, shape={getattr(shap_values, 'shape', None)}"
-                    )
+                    raise ValueError("❌ Unexpected SHAP format.")
 
                 shap_row = shap_row.tolist()
-                if len(shap_row) != len(features):
-                    raise ValueError(f"❌ SHAP row length {len(shap_row)} != feature length {len(features)}")
             else:
                 shap_row = [None] * len(features)
 
@@ -253,6 +239,7 @@ def run_batch_predictions(df):
     except Exception as e:
         st.error(f"Batch prediction failed: {e}")
         return None
+
 
 
 st.markdown("---")
