@@ -7,15 +7,34 @@ import mysql.connector
 from joblib import load
 from datetime import datetime
 
-# --- Load Model and Feature Columns ---
+from joblib import load
+
+# Define custom wrapper class before loading
+class DropoutPredictor:
+    def __init__(self, model, threshold, features):
+        self.model = model
+        self.threshold = threshold
+        self.features = features
+
+    def predict(self, X):
+        X = X[self.features]
+        proba = self.model.predict_proba(X)[:, 1]
+        return (proba >= self.threshold).astype(int)
+
+    def predict_proba(self, X):
+        X = X[self.features]
+        return self.model.predict_proba(X)
+
+# Now safely load the model
 model = load("dropout_model_rf.joblib")
-features = pd.read_csv("model_features.csv").squeeze().tolist()
+features = model.features
+
 
 # --- Load studentdata.csv to infer data types for manual input form ---
 full_data = pd.read_csv("studentdata.csv")
 feature_types = full_data.drop(columns=["Target", "Target_encoded","Student_ID"], errors='ignore').dtypes.to_dict()
 
-# --- Database Configuration ---
+#--- Database Configuration ---
 DB_CONFIG = {
     "host": st.secrets["connections"]["mysql"]["host"],
     "port": st.secrets["connections"]["mysql"]["port"],
@@ -23,6 +42,15 @@ DB_CONFIG = {
     "password": st.secrets["connections"]["mysql"]["password"],
     "database": st.secrets["connections"]["mysql"]["database"]
 }
+
+# DB_CONFIG = {
+#     "host": "localhost",  # or 127.0.0.1
+#     "port": 3306,
+#     "user": "root",
+#     "password": "Password@2000",
+#     "database": "dropoutpreddb"
+# }
+
 
 
 # --- Database Access ---
@@ -35,7 +63,7 @@ def get_student_data(student_id):
 
 # --- SHAP Computation ---
 def compute_shap_values(input_df):
-    explainer = shap.TreeExplainer(model)
+    explainer = shap.TreeExplainer(model.model)  # Access the internal sklearn model
     shap_values = explainer.shap_values(input_df)
 
     # Handle SHAP output variations
@@ -49,11 +77,11 @@ def compute_shap_values(input_df):
         raise ValueError("Unexpected SHAP structure.")
 
 # --- Store Prediction + SHAP in DB ---
-def store_prediction(student_id, prediction,probability, shap_values=None):
+def store_prediction(student_id, prediction, probability, name, email, shap_values=None):
     conn = mysql.connector.connect(**DB_CONFIG)
     cursor = conn.cursor()
 
-    cols = ["Student_ID", "Prediction_Result","Dropout_Probability"] + features
+    cols = ["Student_ID", "Prediction_Result", "Dropout_Probability", "Name", "Email"] + features
     columns_sql = ", ".join([f"`{col}`" for col in cols])  # Escape column names
     placeholders = ", ".join(["%s"] * len(cols))
     insert_sql = f"""
@@ -61,10 +89,22 @@ def store_prediction(student_id, prediction,probability, shap_values=None):
         VALUES ({placeholders})
     """
 
-    if shap_values:
-        values = [student_id, prediction, probability] + [float(v) for v in shap_values]
+    # 🛠 FIX HERE
+    if shap_values is not None and not isinstance(shap_values, (list, np.ndarray)):
+        shap_values = [shap_values]  # wrap float to make iterable
+
+    if shap_values is not None:
+        values = [student_id, prediction, probability, name, email] + [
+            float(v) if v is not None else None for v in shap_values
+        ]
     else:
-        values = [student_id, prediction , probability] + [None] * len(features)
+        values = [student_id, prediction, probability, name, email] + [None] * len(features)
+
+    if len(values) != len(cols):
+        raise ValueError(f"🚨 Mismatch: {len(values)} values for {len(cols)} columns")
+
+    if shap_values is not None and len(features) != len(shap_values):
+        raise ValueError(f"SHAP value count ({len(shap_values)}) doesn't match feature count ({len(features)})")
 
     cursor.execute(insert_sql, values)
     conn.commit()
@@ -87,19 +127,19 @@ if st.button("Predict Dropout"):
         st.error(" Student ID not found in the database.")
     else:
         input_df = student_df[features]
+        name = student_df["Name"].iloc[0] if "Name" in student_df.columns else None
+        email = student_df["Email"].iloc[0] if "Email" in student_df.columns else None
         prediction = int(model.predict(input_df)[0])
         probability = round(float(model.predict_proba(input_df)[0][1]) * 100, 2)
 
         st.success(f" Prediction: {'Dropout' if prediction == 1 else 'Not Dropout'}")
         st.info(f" Dropout Probability: {probability}%")
 
-        st.markdown("### Student Feature Snapshot")
-        st.dataframe(input_df.T)
 
         if prediction == 1:
             st.warning(" Student at risk of dropping out — computing explanations...")
             shap_values = compute_shap_values(input_df)
-            store_prediction(student_id, prediction, probability, shap_values)
+            store_prediction(student_id, prediction,probability, name, email, shap_values)
             st.success(" SHAP explanations stored in the database.")
 
             shap_series = pd.Series(shap_values, index=features)
@@ -115,86 +155,136 @@ if st.button("Predict Dropout"):
             st.pyplot(fig)
 
         else:
-            store_prediction(student_id, prediction, probability)
+            store_prediction(student_id, prediction,probability, name, email)
             st.success(" Prediction stored without SHAP values (student not at risk).")
 
-# # --- Manual Input Section (shown only after button click) ---
-# st.markdown("---")
-# show_manual = st.button("📝 Or Click Here for Manual Entry")
-#
-# if show_manual:
-#     st.header("📝 Manual Entry for New Student")
-#
-#     # Define dropdown categories
-#     binary_dropdowns = {
-#         "Living_With_Family", "StudentWorker", "Health_Issues_Reported", "Teacher_Consultancy",
-#         "Transport_User", "Mental_Depression", "Mental_Anxiety", "International",
-#         "Scholarship holder", "Tuition fees up to date", "Debtor",
-#         "Educational special needs", "Displaced", "Daytime/evening attendance"
-#     }
-#
-#     level_dropdowns = {
-#         "Physical_Activity", "Sleep_Quality_Proxy", "Health_Risk_Proxy"
-#     }
-#
-#     level_options = {"LOW": 0, "MODERATE": 1, "HIGH": 2}
-#     gender_options = {"Male": 1, "Female": 0}
-#
-#     with st.form("manual_entry_form"):
-#         manual_inputs = {}
-#         st.markdown("#### Enter Feature Values")
-#
-#         # Student ID input first
-#         student_id_manual = st.number_input("Enter Student ID (5-digit)", min_value=10000, max_value=99999, step=1, format="%d")
-#
-#         for feature, dtype in feature_types.items():
-#             if feature == "Student_ID":
-#                 continue  # skip since we're collecting it separately
-#             if feature == "Gender":
-#                 gender = st.selectbox(f"{feature}", options=list(gender_options.keys()), index=0)
-#                 manual_inputs[feature] = gender_options[gender]
-#             elif feature in binary_dropdowns:
-#                 choice = st.selectbox(f"{feature}", options=["Yes", "No"], index=0)
-#                 manual_inputs[feature] = 1 if choice == "Yes" else 0
-#             elif feature in level_dropdowns:
-#                 level = st.selectbox(f"{feature}", options=list(level_options.keys()), index=0)
-#                 manual_inputs[feature] = level_options[level]
-#             elif dtype == 'int64':
-#                 manual_inputs[feature] = st.number_input(f"{feature}", step=1, format="%d")
-#             elif dtype == 'float64':
-#                 manual_inputs[feature] = st.number_input(f"{feature}", step=0.01, format="%.2f")
-#
-#         manual_submit = st.form_submit_button("Submit and Predict")
-#
-#     if manual_submit:
-#         input_df = pd.DataFrame([manual_inputs])
-#         prediction = int(model.predict(input_df[features])[0])
-#         probability = round(float(model.predict_proba(input_df)[0][1]) * 100, 2)
-#
-#         st.success(f"🎯 Prediction: {'Dropout' if prediction == 1 else 'Not Dropout'}")
-#         st.info(f"📊 Dropout Probability: {probability}%")
-#
-#         st.markdown("### Entered Student Features")
-#         st.dataframe(input_df[features].T)
-#
-#         if prediction == 1:
-#             st.warning("⚠️ Student at risk of dropping out — computing explanations...")
-#             shap_values = compute_shap_values(input_df[features])
-#             store_prediction(student_id=student_id_manual, prediction=prediction,probability=probability, shap_values=shap_values)
-#             st.success("✅ SHAP explanations stored in the database.")
-#
-#             shap_series = pd.Series(shap_values, index=features)
-#             top_factors = shap_series.abs().sort_values(ascending=False).head(10)
-#             top_features = top_factors.index
-#             top_values = shap_series[top_features]
-#
-#             fig, ax = plt.subplots()
-#             top_values.plot(kind='barh', ax=ax, color='skyblue')
-#             ax.set_title("Top 10 Contributing Factors to Dropout")
-#             ax.set_xlabel("SHAP Value")
-#             ax.invert_yaxis()
-#             st.pyplot(fig)
-#
-#         else:
-#             store_prediction(student_id=student_id_manual, prediction=prediction,probability=probability)
-#             st.success("✅ Prediction stored without SHAP values (student not at risk).")
+
+#file upload section
+
+#to check and update student_data
+def upsert_student_data(row):
+    """Insert or update student_data table with given row"""
+    conn = mysql.connector.connect(**DB_CONFIG)
+    cursor = conn.cursor()
+
+    columns = list(row.index)
+    placeholders = ", ".join(["%s"] * len(columns))
+    col_sql = ", ".join([f"`{col}`" for col in columns])
+
+    update_sql = ", ".join([f"`{col}`=VALUES(`{col}`)" for col in columns if col != "Student_ID"])
+
+    sql = f"""
+        INSERT INTO student_data ({col_sql})
+        VALUES ({placeholders})
+        ON DUPLICATE KEY UPDATE {update_sql}
+    """
+
+    values = [row[col] for col in columns]
+    cursor.execute(sql, values)
+    conn.commit()
+    cursor.close()
+    conn.close()
+
+
+#batch prediction function
+def run_batch_predictions(df):
+    try:
+        input_df = df[model.features].copy()
+        predictions = model.predict(input_df)
+        probabilities = model.predict_proba(input_df)[:, 1] * 100
+
+        results = []
+        for i, row in df.iterrows():
+            student_id = row["Student_ID"]
+            name = row.get("Name", None)
+            email = row.get("Email", None)
+
+            input_row = pd.DataFrame([row[features].values], columns=features)
+
+            prediction = int(model.predict(input_row)[0])
+            probability = round(float(model.predict_proba(input_row)[0][1]) * 100, 2)
+
+            for i, row in df.iterrows():
+                student_id = row["Student_ID"]
+                name = row.get("Name", None)
+                email = row.get("Email", None)
+
+                # ✅ Add this to update/insert into student_data table
+                upsert_student_data(row)
+
+
+
+            # SHAP values only for predicted dropouts
+            if prediction == 1:
+                explainer = shap.TreeExplainer(model.model)
+                shap_values = explainer.shap_values(input_row[features])
+
+
+
+                # Handle various SHAP formats
+                if isinstance(shap_values, list) and len(shap_values) == 2:
+                    shap_row = shap_values[1][0]  # Class 1, first row
+                elif isinstance(shap_values, np.ndarray) and shap_values.ndim == 3:
+                    shap_row = shap_values[0, :, 1]  # Class 1, first row
+                elif isinstance(shap_values, np.ndarray) and shap_values.ndim == 2:
+                    shap_row = shap_values[0]  # First row
+                else:
+                    raise ValueError(
+                        f"❌ Unexpected SHAP format: type={type(shap_values)}, shape={getattr(shap_values, 'shape', None)}"
+                    )
+
+                shap_row = shap_row.tolist()
+                if len(shap_row) != len(features):
+                    raise ValueError(f"❌ SHAP row length {len(shap_row)} != feature length {len(features)}")
+            else:
+                shap_row = [None] * len(features)
+
+            store_prediction(student_id, prediction, probability, name, email, shap_row)
+
+            results.append({
+                "Student_ID": student_id,
+                "Prediction_Result": "Dropout" if prediction == 1 else "Not Dropout",
+                "Dropout_Probability": probability,
+                **{f: shap_row[j] for j, f in enumerate(model.features)}
+            })
+
+        return pd.DataFrame(results)
+
+    except Exception as e:
+        st.error(f"Batch prediction failed: {e}")
+        return None
+
+
+st.markdown("---")
+st.header("📁 Upload File for Batch Prediction")
+uploaded_file = st.file_uploader("Upload a CSV or Excel file ", type=["csv", "xlsx"])
+
+if uploaded_file is not None:
+    try:
+        if uploaded_file.name.endswith('.xlsx'):
+            uploaded_df = pd.read_excel(uploaded_file)
+        else:
+            uploaded_df = pd.read_csv(uploaded_file)
+
+        # Check if required columns are present
+        if "Student_ID" not in uploaded_df.columns:
+            st.error("Uploaded file must contain 'Student_ID'")
+            st.stop()
+
+        missing_features = [f for f in model.features if f not in uploaded_df.columns]
+        if missing_features:
+            st.error(f"Missing features: {', '.join(missing_features)}")
+            st.stop()
+
+        st.success(" File uploaded and validated!")
+        st.dataframe(uploaded_df.head())
+
+        if st.button(" Predict All"):
+            with st.spinner("Running batch predictions..."):
+                prediction_df = run_batch_predictions(uploaded_df)
+            if prediction_df is not None:
+                st.success(" Predictions completed and stored")
+
+    except Exception as e:
+        st.error(f"Error processing file: {e}")
+

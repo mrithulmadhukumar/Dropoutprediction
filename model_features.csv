@@ -1,54 +1,32 @@
-0
-Marital status
+feature
 Application mode
 Application order
 Course
-Daytime/evening attendance
-Previous qualification
 Previous qualification (grade)
-Nationality
 Mother's qualification
 Father's qualification
 Mother's occupation
 Father's occupation
 Admission grade
-Displaced
-Educational special needs
 Debtor
 Tuition fees up to date
 Gender
 Scholarship holder
 Age at enrollment
-International
-Curricular units 1st sem (credited)
-Curricular units 1st sem (enrolled)
-Curricular units 1st sem (evaluations)
-Curricular units 1st sem (approved)
-Curricular units 1st sem (grade)
-Curricular units 1st sem (without evaluations)
-Curricular units 2nd sem (credited)
-Curricular units 2nd sem (enrolled)
-Curricular units 2nd sem (evaluations)
-Curricular units 2nd sem (approved)
-Curricular units 2nd sem (grade)
-Curricular units 2nd sem (without evaluations)
 Unemployment rate
 Inflation rate
 GDP
-Performance_Ratio
-GPA_avg
+Performance_Ratio_avg
+GPA_avg_scaled
 Health_Risk_Proxy
 Stress_Level_Proxy
 Study_Hours_Proxy
 Sleep_Quality_Proxy
-Physical_Activity
 Mental_Depression
 Mental_Anxiety
-Daily_Study_Hours
 Social_Media_Hours
 Transport_User
 Avg_Attendance
 Teacher_Consultancy
-Health_Issues_Reported
 StudentWorker
 Living_With_Family
