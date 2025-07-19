@@ -52,6 +52,14 @@ DB_CONFIG = {
 #     "database": "dropoutpreddb"
 # }
 
+# DB_CONFIG = {
+#     "host": "localhost",  # or 127.0.0.1
+#     "port": 3306,
+#     "user": "root",
+#     "password": "Password@2000",
+#     "database": "dropoutpreddb"
+# }
+
 
 
 # --- Database Access ---
